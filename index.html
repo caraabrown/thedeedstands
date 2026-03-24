@@ -909,6 +909,7 @@ footer { background:var(--black); border-top:1px solid var(--border-dark); }
           <textarea class="form-textarea-dark" id="gf-desc" style="min-height:80px;" placeholder="One or two sentences about your situation and what you need."></textarea>
         </div>
         <button class="btn-primary-blue" style="width:100%;" onclick="submitGofundme()">Submit My Campaign</button>
+        <div id="gf-submitted-msg" style="display:none;margin-top:16px;padding:16px;background:var(--blue-dim);border:1px solid var(--blue-border);font-size:13px;color:var(--text-on-dark-muted);line-height:1.7;">Your campaign has been submitted for review. Once approved by the site administrator it will appear on the wall below. Thank you.</div>
       </div>
 
       <!-- LIVE CAMPAIGN WALL -->
@@ -924,6 +925,9 @@ footer { background:var(--black); border-top:1px solid var(--border-dark); }
             <a href="#" class="gf-donate-btn">GoFundMe Launching Soon — Check Back</a>
           </div>
           <div id="gf-submitted-wall"></div>
+          <div style="margin-top:20px;text-align:right;">
+            <button onclick="openAdmin()" style="background:none;border:none;font-family:var(--font-sub);font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-on-dark-dim);cursor:pointer;padding:0;">Admin</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1265,14 +1269,18 @@ new IntersectionObserver(function(entries){ entries.forEach(function(e){ if(e.is
 
 new IntersectionObserver(function(e){ if(e[0].isIntersecting) setTimeout(function(){ pf.style.width='1%'; },300); },{threshold:.5}).observe(pf);
 
-// GOFUNDME WALL
+// GOFUNDME WALL — admin approval required
+var ADMIN_PASS = 'OurDeedStands2025';
+
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
 async function loadGfWall() {
   var wall = document.getElementById('gf-submitted-wall');
   if (!wall) return;
   try {
-    var result = await window.storage.get('gf-campaigns', true);
+    var result = await window.storage.get('gf-approved', true);
     var campaigns = result ? JSON.parse(result.value) : [];
-    if (!campaigns.length) { wall.innerHTML = ''; return; }
+    if (!campaigns.length) { wall.innerHTML = '<div class="gf-empty">No community campaigns approved yet. Submit yours above.</div>'; return; }
     wall.innerHTML = campaigns.map(function(c) {
       return '<div class="gf-card">' +
         '<div class="gf-card-name">' + esc(c.name) + ' · ' + esc(c.address) + '</div>' +
@@ -1285,8 +1293,6 @@ async function loadGfWall() {
   } catch(e) { wall.innerHTML = ''; }
 }
 
-function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
 async function submitGofundme() {
   var name = document.getElementById('gf-name').value.trim();
   var address = document.getElementById('gf-address').value.trim();
@@ -1297,18 +1303,101 @@ async function submitGofundme() {
   if (!name || !address || !link || !desc) { alert('Please fill in your name, address, GoFundMe link, and description.'); return; }
   if (!link.startsWith('http')) { alert('Please enter a valid GoFundMe URL starting with https://'); return; }
   try {
-    var existing = [];
-    try { var r = await window.storage.get('gf-campaigns', true); existing = r ? JSON.parse(r.value) : []; } catch(e2) {}
-    existing.push({ name:name, address:address, tenure:tenure, purpose:purpose, link:link, desc:desc, added: new Date().toLocaleDateString() });
-    await window.storage.set('gf-campaigns', JSON.stringify(existing), true);
+    var pending = [];
+    try { var r = await window.storage.get('gf-pending', true); pending = r ? JSON.parse(r.value) : []; } catch(e2) {}
+    pending.push({ name:name, address:address, tenure:tenure, purpose:purpose, link:link, desc:desc, added: new Date().toLocaleDateString(), id: Date.now() });
+    await window.storage.set('gf-pending', JSON.stringify(pending), true);
     ['gf-name','gf-address','gf-purpose','gf-link','gf-desc'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
     document.getElementById('gf-tenure').value = '';
-    await loadGfWall();
-    alert('Your campaign has been added to the wall. Thank you.');
-  } catch(e) { alert('There was an error saving your campaign. Please try again.'); }
+    var msg = document.getElementById('gf-submitted-msg');
+    if (msg) msg.style.display = 'block';
+  } catch(e) { alert('There was an error submitting. Please try again.'); }
+}
+
+// ADMIN
+function openAdmin() {
+  var pass = prompt('Admin password:');
+  if (!pass || pass !== ADMIN_PASS) { alert('Incorrect password.'); return; }
+  document.getElementById('admin-overlay').classList.add('active');
+  renderAdmin();
+}
+function closeAdmin() { document.getElementById('admin-overlay').classList.remove('active'); }
+
+async function renderAdmin() {
+  var panel = document.getElementById('admin-panel-inner');
+  var pending = [], approved = [];
+  try { var r = await window.storage.get('gf-pending', true); pending = r ? JSON.parse(r.value) : []; } catch(e) {}
+  try { var r2 = await window.storage.get('gf-approved', true); approved = r2 ? JSON.parse(r2.value) : []; } catch(e) {}
+  var html = '<div style="font-family:var(--font-heading);font-size:22px;font-weight:700;text-transform:uppercase;color:var(--off-white);margin-bottom:4px;">Campaign Review</div>';
+  html += '<div style="font-size:13px;color:var(--text-on-dark-muted);margin-bottom:28px;">Pending: <strong style="color:var(--off-white);">' + pending.length + '</strong> &nbsp;·&nbsp; Live: <strong style="color:var(--off-white);">' + approved.length + '</strong></div>';
+  html += '<div style="font-family:var(--font-sub);font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:var(--blue-light);margin-bottom:12px;">Awaiting Your Approval</div>';
+  if (!pending.length) {
+    html += '<div style="font-size:13px;color:var(--text-on-dark-dim);font-style:italic;margin-bottom:28px;">No pending submissions.</div>';
+  } else {
+    pending.forEach(function(c, i) {
+      html += '<div style="background:var(--black-3);border:1px solid var(--border-dark);padding:20px;margin-bottom:8px;">' +
+        '<div style="font-family:var(--font-heading);font-size:14px;font-weight:600;color:var(--off-white);margin-bottom:3px;">' + esc(c.name) + ' · ' + esc(c.address) + '</div>' +
+        '<div style="font-size:11px;color:var(--text-on-dark-muted);margin-bottom:6px;">' + esc(c.tenure) + ' &nbsp;·&nbsp; ' + esc(c.purpose) + ' &nbsp;·&nbsp; Submitted ' + esc(c.added) + '</div>' +
+        '<div style="font-size:13px;color:var(--text-on-dark-muted);margin-bottom:8px;">' + esc(c.desc) + '</div>' +
+        '<a href="' + esc(c.link) + '" target="_blank" style="font-size:12px;color:var(--blue-light);display:block;margin-bottom:14px;">' + esc(c.link) + '</a>' +
+        '<div style="display:flex;gap:10px;">' +
+          '<button onclick="approveGf(' + i + ')" style="background:var(--blue);color:#fff;border:none;padding:10px 20px;font-family:var(--font-sub);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;">Approve &amp; Post</button>' +
+          '<button onclick="rejectGf(' + i + ')" style="background:transparent;color:#C42B2B;border:1px solid #C42B2B;padding:10px 20px;font-family:var(--font-sub);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;">Reject &amp; Delete</button>' +
+        '</div></div>';
+    });
+  }
+  html += '<div style="font-family:var(--font-sub);font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:var(--text-on-dark-dim);margin:28px 0 12px;">Currently Live on Wall</div>';
+  if (!approved.length) {
+    html += '<div style="font-size:13px;color:var(--text-on-dark-dim);font-style:italic;">No approved campaigns yet.</div>';
+  } else {
+    approved.forEach(function(c, i) {
+      html += '<div style="background:var(--black-3);border:1px solid var(--border-dark);padding:14px 18px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;gap:16px;">' +
+        '<div><div style="font-size:13px;color:var(--off-white);">' + esc(c.name) + ' · ' + esc(c.address) + '</div>' +
+        '<div style="font-size:11px;color:var(--text-on-dark-dim);margin-top:2px;">Added ' + esc(c.added) + '</div></div>' +
+        '<button onclick="removeGf(' + i + ')" style="background:transparent;color:#C42B2B;border:1px solid #C42B2B;padding:7px 14px;font-family:var(--font-sub);font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;white-space:nowrap;">Remove</button>' +
+      '</div>';
+    });
+  }
+  panel.innerHTML = html;
+}
+
+async function approveGf(i) {
+  var pending = [], approved = [];
+  try { var r = await window.storage.get('gf-pending', true); pending = r ? JSON.parse(r.value) : []; } catch(e) {}
+  try { var r2 = await window.storage.get('gf-approved', true); approved = r2 ? JSON.parse(r2.value) : []; } catch(e) {}
+  approved.push(pending.splice(i, 1)[0]);
+  await window.storage.set('gf-pending', JSON.stringify(pending), true);
+  await window.storage.set('gf-approved', JSON.stringify(approved), true);
+  await renderAdmin(); await loadGfWall();
+}
+
+async function rejectGf(i) {
+  if (!confirm('Reject and permanently delete this submission?')) return;
+  var pending = [];
+  try { var r = await window.storage.get('gf-pending', true); pending = r ? JSON.parse(r.value) : []; } catch(e) {}
+  pending.splice(i, 1);
+  await window.storage.set('gf-pending', JSON.stringify(pending), true);
+  await renderAdmin();
+}
+
+async function removeGf(i) {
+  if (!confirm('Remove this campaign from the live wall?')) return;
+  var approved = [];
+  try { var r = await window.storage.get('gf-approved', true); approved = r ? JSON.parse(r.value) : []; } catch(e) {}
+  approved.splice(i, 1);
+  await window.storage.set('gf-approved', JSON.stringify(approved), true);
+  await renderAdmin(); await loadGfWall();
 }
 
 loadGfWall();
 </script>
+<!-- ADMIN MODAL -->
+<div class="modal-overlay" id="admin-overlay">
+  <div class="modal" style="background:var(--black-2);max-width:760px;">
+    <button class="modal-close" onclick="closeAdmin()" style="color:var(--text-on-dark-muted);">✕</button>
+    <div id="admin-panel-inner"></div>
+  </div>
+</div>
+
 </body>
 </html>
